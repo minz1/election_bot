@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
+    <data-source source="LOCAL" name="test" uuid="db419070-dc0e-41d1-91bc-825e8155da31">
+      <driver-ref>sqlite.xerial</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
+      <jdbc-url>jdbc:sqlite:C:\Users\Emery Tanghanwaye\IdeaProjects\ElectionBot\test.db</jdbc-url>
+    </data-source>
+    <data-source source="LOCAL" name="electionbot" uuid="a80e4e9a-95e5-4ab8-909b-d8077a5248a0">
+      <driver-ref>sqlite.xerial</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
+      <jdbc-url>jdbc:sqlite:C:\Users\Emery Tanghanwaye\IdeaProjects\ElectionBot\electionbot.db</jdbc-url>
+    </data-source>
+  </component>
+</project>
