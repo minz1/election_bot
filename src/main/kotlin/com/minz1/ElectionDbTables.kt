@@ -16,3 +16,14 @@ class User(id: EntityID<Int>): IntEntity(id) {
     var discordId by Users.discordId
     var party by Users.party
 }
+
+object Nominations : IntIdTable(columnName = "nominationid") {
+    val nominatorId = reference("nominatorid", Users)
+    val nomineeId = reference("nomineeid", Users)
+}
+
+class Nomination(id: EntityID<Int>): IntEntity(id) {
+    companion object : IntEntityClass<Nomination>(Nominations)
+    var nominatorId by Nominations.nominatorId
+    var nomineeId by Nominations.nomineeId
+}
