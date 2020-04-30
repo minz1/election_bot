@@ -26,24 +26,27 @@ class ElectionBot {
     private val ROLE_ONE = "role.one"
     private val ROLE_TWO = "role.two"
     private val ROLE_THREE = "role.three"
+    private val STAGE = "stage"
 
     private val config = ConfigurationProperties.systemProperties() overriding
             EnvironmentVariables() overriding
             ConfigurationProperties.fromFile(File(FILE_NAME))
 
+    private val keyCmdPrefix = Key(CMD_PREFIX, stringType)
     private val keyBotToken = Key(BOT_TOKEN, stringType)
     private val keyGuildId = Key(GUILD_ID, stringType)
     private val keyRoleOne = Key(ROLE_ONE, stringType)
     private val keyRoleTwo = Key(ROLE_TWO, stringType)
     private val keyRoleThree = Key(ROLE_THREE, stringType)
-    private val keyCmdPrefix = Key(CMD_PREFIX, stringType)
+    private val keyStage = Key(STAGE, intType)
 
+    private val cmdPrefix = config[keyCmdPrefix]
     private val botToken = config[keyBotToken]
     private val guildId = config[keyGuildId]
     private val roleOne = config[keyRoleOne]
     private val roleTwo = config[keyRoleTwo]
     private val roleThree = config[keyRoleThree]
-    private val cmdPrefix = config[keyCmdPrefix]
+    private val stage = config[keyStage]
 
     private val db = Database.connect("jdbc:sqlite:electionbot.db", "org.sqlite.JDBC")
     private val guildClient = GuildClient(botToken, guildId)
@@ -58,6 +61,10 @@ class ElectionBot {
 
         require(roles.size == 3) {
             "ERROR: must have all 3 roles!"
+        }
+
+        require(stage in 1..3) {
+            "ERROR: Stage must be 1, 2, or 3!"
         }
 
         TransactionManager.manager.defaultIsolationLevel = 8 // Connection.TRANSACTION_SERIALIZABLE = 8
@@ -83,6 +90,14 @@ class ElectionBot {
 
                 for (num in 1..3) {
                     command("register $num") {
+                        if (stage != 1) {
+                            reply {
+                                title = "Error!"
+                                description = "The registration period is over!"
+                            }
+                            return@command
+                        }
+
                         val authorId = this.author.id
 
                         val registeredVoterIds = suspendedTransactionAsync(Dispatchers.IO, db = db) {
@@ -154,6 +169,14 @@ class ElectionBot {
                 }
 
                 command("nominate") {
+                    if (stage != 2) {
+                        reply {
+                            title = "Error!"
+                            description = "The nomination period has ended!"
+                        }
+                        return@command
+                    }
+
                     val args = this.content.removePrefix("\$nominate ").split(" ")
 
                     if (args.isNotEmpty()) {
