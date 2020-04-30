@@ -177,12 +177,18 @@ class ElectionBot {
                         return@command
                     }
 
-                    val args = this.content.removePrefix("\$nominate ").split(" ")
+                    val args = this.content.removePrefix("\$nominate ").trim().split(" ")
 
                     if (args.isNotEmpty()) {
                         try {
                             val nominatorUserId = this.authorId
-                            val nomineeUserId = args[0].removePrefix("<@!").removeSuffix(">")
+
+                            val nomineeUserId = if (args[0].contains("<@!")) {
+                                args[0].removePrefix("<@!").removeSuffix(">")
+                            } else {
+                                args[0].removePrefix("<@").removeSuffix(">")
+                            }
+
                             val nominee = guildClient.getMember(nomineeUserId)
 
                             val previousNominatorIds = suspendedTransactionAsync(Dispatchers.IO) {
