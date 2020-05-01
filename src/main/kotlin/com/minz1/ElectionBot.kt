@@ -71,7 +71,7 @@ class ElectionBot {
 
         transaction(db) {
             addLogger(StdOutSqlLogger)
-            SchemaUtils.create(Users, Nominations)
+            SchemaUtils.create(Users, Nominations, Dropouts)
         }
 
         val usageTitle = "Usage information"
@@ -147,8 +147,6 @@ class ElectionBot {
                             for (i in 0 until 5) {
                                 val nomineeId = nomineeIds[i]
                                 val nominee = guildClient.getMember(nomineeId)
-                                println(nomineeId)
-                                println(nomineeListings[nomineeId])
                                 stringBuilder.append("${nominee.nickname ?: nominee.user?.username?: nomineeId}: " +
                                         "${nomineeListings[nomineeId]}\n")
                             }
@@ -207,6 +205,23 @@ class ElectionBot {
                                 return@command
                             }
 
+                            val previousDropoutIds = suspendedTransactionAsync(Dispatchers.IO) {
+                                addLogger(StdOutSqlLogger)
+                                Dropouts.innerJoin(Users, { dropoutUserId }, {Users.id})
+                                    .slice(Users.discordId)
+                                    .selectAll()
+                                    .map { it[Users.discordId] }
+                            }.await()
+
+                            if (nomineeUserId in previousDropoutIds) {
+                                reply {
+                                    title = "Error!"
+                                    description = "${nominee.nickname ?: nominee.user?.username ?: "this person"} has" +
+                                            " already dropped out!"
+                                }
+                                return@command
+                            }
+
                             val registeredVoters = suspendedTransactionAsync(Dispatchers.IO) {
                                 addLogger(StdOutSqlLogger)
                                 Users.slice(Users.discordId, Users.party)
@@ -255,6 +270,115 @@ class ElectionBot {
                                 reply {
                                     title = "Error!"
                                     description = "You must be in a party to vote for a nominee!"
+                                }
+                            }
+                        } catch (de: DiscordException) {
+                            reply {
+                                title = "Error!"
+                                description = "You must invoke this command with a mention of your nominee!"
+                            }
+                        }
+                    }
+                }
+
+                command("dropout") {
+                    if (stage != 2) {
+                        reply {
+                            title = "Error!"
+                            description = "The nomination period has ended!"
+                        }
+                        return@command
+                    }
+
+                    val args = this.content.removePrefix("\$dropout ").trim().split(" ")
+
+                    if (args.isNotEmpty()) {
+                        try {
+                            val dropoutId = this.authorId
+
+                            val nomineeUserId = if (args[0].contains("<@!")) {
+                                args[0].removePrefix("<@!").removeSuffix(">")
+                            } else {
+                                args[0].removePrefix("<@").removeSuffix(">")
+                            }
+
+                            val nominee = guildClient.getMember(nomineeUserId)
+
+                            val previousDropoutIds = suspendedTransactionAsync(Dispatchers.IO) {
+                                addLogger(StdOutSqlLogger)
+                                Dropouts.innerJoin(Users, { dropoutUserId }, {Users.id})
+                                    .slice(Users.discordId)
+                                    .selectAll()
+                                    .map { it[Users.discordId] }
+                            }.await()
+
+                            if (dropoutId in previousDropoutIds) {
+                                reply {
+                                    title = "Error!"
+                                    description = "You have already dropped out!"
+                                }
+                                return@command
+                            }
+
+                            if (nomineeUserId in previousDropoutIds) {
+                                reply {
+                                    title = "Error!"
+                                    description = "${nominee.nickname ?: nominee.user?.username ?: "this person"} has" +
+                                            " already dropped out!"
+                                }
+                                return@command
+                            }
+
+                            val registeredVoters = suspendedTransactionAsync(Dispatchers.IO) {
+                                addLogger(StdOutSqlLogger)
+                                Users.slice(Users.discordId, Users.party)
+                                    .selectAll()
+                                    .map { it[Users.discordId] to it[Users.party] }
+                                    .toMap()
+                            }.await()
+
+                            if (dropoutId in registeredVoters.keys) {
+                                if (nomineeUserId in registeredVoters.keys) {
+                                    if (registeredVoters[dropoutId] == registeredVoters[nomineeUserId]) {
+                                        reply {
+                                            title = "Success!"
+                                            description = "You have dropped out, and your votes have been transferred to" +
+                                                    " ${nominee.nickname ?: nominee.user?.username ?: "this person"}."
+                                        }
+
+                                        val userDbIds = suspendedTransactionAsync(Dispatchers.IO) {
+                                            addLogger(StdOutSqlLogger)
+                                            Users.slice(Users.discordId, Users.id)
+                                                .selectAll()
+                                                .map { it[Users.discordId] to it[Users.id] }
+                                                .toMap()
+                                        }.await()
+
+                                        newSuspendedTransaction(Dispatchers.IO) {
+                                            addLogger(StdOutSqlLogger)
+                                            Dropout.new {
+                                                dropoutUserId = userDbIds[dropoutId]!!
+                                            }
+                                            Nominations.update ({ Nominations.nomineeId eq userDbIds[dropoutId]!! }) {
+                                                it[Nominations.nomineeId] = userDbIds[nomineeUserId]!!
+                                            }
+                                        }
+                                    } else {
+                                        reply {
+                                            title = "Error!"
+                                            description = "Your nominee must share the same party as you!"
+                                        }
+                                    }
+                                } else {
+                                    reply {
+                                        title = "Error!"
+                                        description = "Your nominee must be in a party to complete the transfer!!"
+                                    }
+                                }
+                            } else {
+                                reply {
+                                    title = "Error!"
+                                    description = "You must be in a party to dropout!"
                                 }
                             }
                         } catch (de: DiscordException) {

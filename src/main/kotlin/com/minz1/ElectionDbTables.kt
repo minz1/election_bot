@@ -27,3 +27,12 @@ class Nomination(id: EntityID<Int>): IntEntity(id) {
     var nominatorId by Nominations.nominatorId
     var nomineeId by Nominations.nomineeId
 }
+
+object Dropouts : IntIdTable(columnName = "dropoutid") {
+    val dropoutUserId = reference("dropoutuserid", Users)
+}
+
+class Dropout(id: EntityID<Int>): IntEntity(id) {
+    companion object : IntEntityClass<Dropout>(Dropouts)
+    var dropoutUserId by Dropouts.dropoutUserId
+}
