@@ -36,3 +36,14 @@ class Dropout(id: EntityID<Int>): IntEntity(id) {
     companion object : IntEntityClass<Dropout>(Dropouts)
     var dropoutUserId by Dropouts.dropoutUserId
 }
+
+object RunoffNominations : IntIdTable(columnName = "runoffnominationid") {
+    val runoffNominatorId = reference("runoffnominatorid", Users)
+    val runoffNomineeId = reference("runoffnomineeid", Users)
+}
+
+class RunoffNomination(id: EntityID<Int>): IntEntity(id) {
+    companion object : IntEntityClass<RunoffNomination>(RunoffNominations)
+    var runoffNominatorId by RunoffNominations.runoffNominatorId
+    var runoffNomineeId by RunoffNominations.runoffNomineeId
+}
