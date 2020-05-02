@@ -53,6 +53,26 @@ class ElectionBot {
     private val db = Database.connect("jdbc:sqlite:electionbot.db", "org.sqlite.JDBC")
     private val guildClient = GuildClient(botToken, guildId)
 
+    private suspend fun getGeneralVotePreferenceWithCountAsync(preference: Int): Deferred<Map<String, Long>> {
+        val candidateId = when (preference) {
+            1 -> GeneralVotes.firstCandidateId
+            2 -> GeneralVotes.secondCandidateId
+            3 -> GeneralVotes.thirdCandidateId
+            else -> error("Preference must be in 1 to 3")
+        }
+
+        return suspendedTransactionAsync(Dispatchers.IO) {
+            addLogger(StdOutSqlLogger)
+            GeneralVotes.innerJoin(Users, { candidateId }, {Users.id})
+                    .slice(Users.discordId, Users.discordId.count())
+                    .selectAll()
+                    .groupBy(Users.discordId)
+                    .orderBy(Users.discordId.count(), SortOrder.DESC)
+                    .map { it[Users.discordId] to it[Users.discordId.count()] }
+                    .toMap()
+        }
+    }
+
     private suspend fun getTopNomineesByPartyAsync(party: Int): Deferred<Map<String, Long>> {
         return suspendedTransactionAsync(Dispatchers.IO) {
             addLogger(StdOutSqlLogger)
@@ -94,6 +114,18 @@ class ElectionBot {
         }
     }
 
+    private suspend fun getFinalNominees(): List<String> {
+        return listOf(ArrayList<String>(getRNomineesWithCountAsync(1).await().keys),
+        ArrayList<String>(getRNomineesWithCountAsync(2).await().keys),
+        ArrayList<String>(getRNomineesWithCountAsync(3).await().keys)).map {
+            if (it.isNotEmpty()) {
+                it[0]
+            } else {
+                ""
+            }
+        }
+    }
+
     private suspend fun getDropoutsAsync(): Deferred<List<String>> {
         return suspendedTransactionAsync(Dispatchers.IO) {
             addLogger(StdOutSqlLogger)
@@ -101,6 +133,16 @@ class ElectionBot {
                 .slice(Users.discordId)
                 .selectAll()
                 .map { it[Users.discordId] }
+        }
+    }
+
+    private suspend fun getGeneralVotersAsync(): Deferred<List<String>> {
+        return suspendedTransactionAsync(Dispatchers.IO) {
+            addLogger(StdOutSqlLogger)
+            GeneralVotes.innerJoin(Users, {voterId}, {Users.id})
+                    .slice(Users.discordId)
+                    .selectAll()
+                    .map { it[Users.discordId] }
         }
     }
 
@@ -164,7 +206,7 @@ class ElectionBot {
 
         transaction(db) {
             addLogger(StdOutSqlLogger)
-            SchemaUtils.create(Users, Nominations, Dropouts, RunoffNominations)
+            SchemaUtils.create(Users, Nominations, Dropouts, RunoffNominations, GeneralVotes)
         }
 
         val usageTitle = "Usage information"
@@ -176,7 +218,11 @@ class ElectionBot {
                 "Gives a vote for the first round of nominations to the mentioned user.\n\n" +
                 "**${cmdPrefix}rnominate**: *(STAGE 3)*  Takes an argument of a user mention.\n" +
                 "Gives a vote for the second round of nominations to the mentioned user.\n\n" +
-                "**${cmdPrefix}listings**: *(STAGE 2 to 4)*  Takes an argument of either 1, 2, or 3\n" +
+                "**${cmdPrefix}vote**: *(STAGE 4)*  Takes 3 arguments of user mentions.\n" +
+                "Gives a vote for the final round of nominations to the mentioned users.\n" +
+                "These are ranked by preference. The first mention being the first preference,\n" +
+                "second being the second preference, and third being the third preference.\n\n" +
+                "**${cmdPrefix}listings**: *(STAGES 2 to 4)*  Takes an argument of either 1, 2, or 3\n" +
                 "Prints a vote report for the current stage, with the party corresponding to one of the following: \n" +
                 "1: ${roles[0].name}, 2: ${roles[1].name}, 3: ${roles[2].name}"
 
@@ -235,12 +281,11 @@ class ElectionBot {
                             return@command
                         }
 
-                        var nomineeListings = emptyMap<String, Long>()
-
-                        if (stage == 2) {
-                            nomineeListings = getTopNomineesByPartyAsync(num).await()
-                        } else if (stage == 3) {
-                            nomineeListings = getRNomineesWithCountAsync(num).await()
+                        val nomineeListings = when(stage) {
+                            2 -> getTopNomineesByPartyAsync(num).await()
+                            3 -> getRNomineesWithCountAsync(num).await()
+                            4 -> getGeneralVotePreferenceWithCountAsync(num).await()
+                            else -> emptyMap()
                         }
 
                         val stringBuilder = StringBuilder()
@@ -262,13 +307,25 @@ class ElectionBot {
                             }
                         }
 
-                        reply {
-                            val beginningString = when (stage) {
-                                2 -> { "Stage two nominee" }
-                                3 -> { "Stage three nominee" }
-                                else -> { "Nominee" }
+                        val beginningString = when(stage) {
+                            2 -> "Stage two nominee"
+                            3 -> "Stage three nominee"
+                            4 -> "Stage four nominee"
+                            else -> "Nominee"
+                        }
+                        val endString = if (stage == 4) {
+                            when(num) {
+                                1 -> "first preference nominees"
+                                2 -> "second preference nominees"
+                                3 -> "third preference nominees"
+                                else -> "nominees"
                             }
-                            title = "$beginningString listings for the ${roles[num - 1].name} party"
+                        } else {
+                            "${roles[num - 1].name} party"
+                        }
+
+                        reply {
+                            title = "$beginningString listings for the $endString"
                             description = "$stringBuilder"
                         }
                     }
@@ -320,8 +377,8 @@ class ElectionBot {
 
                             val registeredVoters = getRegisteredVoterPartiesAsync().await()
 
-                            if (nominatorUserId in registeredVoters.keys) {
-                                if (nomineeUserId in registeredVoters.keys) {
+                            if (nominatorUserId in registeredVoters.keys && registeredVoters[nominatorUserId] != 0) {
+                                if (nomineeUserId in registeredVoters.keys && registeredVoters[nomineeUserId] != 0) {
                                     if (registeredVoters[nominatorUserId] == registeredVoters[nomineeUserId]) {
                                         reply {
                                             title = "Success!"
@@ -409,8 +466,8 @@ class ElectionBot {
 
                             val registeredVoters = getRegisteredVoterPartiesAsync().await()
 
-                            if (dropoutId in registeredVoters.keys) {
-                                if (nomineeUserId in registeredVoters.keys) {
+                            if (dropoutId in registeredVoters.keys && registeredVoters[dropoutId] != 0) {
+                                if (nomineeUserId in registeredVoters.keys && registeredVoters[nomineeUserId] != 0) {
                                     val dropoutParty = registeredVoters[dropoutId]!!
                                     val nomineeParty = registeredVoters[nomineeUserId]!!
 
@@ -447,11 +504,11 @@ class ElectionBot {
 
                                             if (stage == 2) {
                                                 Nominations.update({ Nominations.nomineeId eq userDbIds[dropoutId]!! }) {
-                                                    it[Nominations.nomineeId] = userDbIds[nomineeUserId]!!
+                                                    it[nomineeId] = userDbIds[nomineeUserId]!!
                                                 }
                                             } else if (stage == 3) {
                                                 RunoffNominations.update({ RunoffNominations.runoffNomineeId eq userDbIds[dropoutId]!! }) {
-                                                    it[RunoffNominations.runoffNomineeId] = userDbIds[nomineeUserId]!!
+                                                    it[runoffNomineeId] = userDbIds[nomineeUserId]!!
                                                 }
                                             }
 
@@ -532,8 +589,8 @@ class ElectionBot {
 
                             val registeredVoters = getRegisteredVoterPartiesAsync().await()
 
-                            if (rnominatorUserId in registeredVoters.keys) {
-                                if (rnomineeUserId in registeredVoters.keys) {
+                            if (rnominatorUserId in registeredVoters.keys && registeredVoters[rnominatorUserId] != 0) {
+                                if (rnomineeUserId in registeredVoters.keys && registeredVoters[rnomineeUserId] != 0) {
                                     if (registeredVoters[rnominatorUserId] == registeredVoters[rnomineeUserId]) {
                                         val party = registeredVoters[rnominatorUserId]!!
                                         val rnominees = getRNomineesFromNominees()
@@ -585,6 +642,114 @@ class ElectionBot {
                                 title = "Error!"
                                 description = "You must invoke this command with a mention of your nominee!"
                             }
+                        }
+                    }
+                }
+
+                command("vote") {
+                    if (stage != 4) {
+                        reply {
+                            title = "Error!"
+                            description = "The final nomination stage is not active!"
+                        }
+                        return@command
+                    }
+
+                    val args = this.content.removePrefix("\$vote ").trim().split(" ")
+
+                    if (args.size == 3) {
+                        try {
+                            val voterId = this.authorId
+
+                            val previousVoters = getGeneralVotersAsync().await()
+
+                            if (voterId in previousVoters) {
+                                reply {
+                                    title = "Error!"
+                                    description = "You have already submitted your ranked vote!"
+                                }
+                                return@command
+                            }
+
+                            val rankedNomineeIds = args.map {
+                                if (it.contains("<@!")) {
+                                    it.removePrefix("<@!").removeSuffix(">")
+                                } else {
+                                    it.removePrefix("<@").removeSuffix(">")
+                                }
+                            }
+
+                            if (rankedNomineeIds.distinct().size != rankedNomineeIds.size) {
+                                reply {
+                                    title = "Error!"
+                                    description = "You cannot vote for a candidate more than once!"
+                                }
+                                return@command
+                            }
+
+                            val finalNomineeIds = getFinalNominees()
+
+                            for (rankedNomineeId in rankedNomineeIds) {
+                                if (rankedNomineeId !in finalNomineeIds) {
+                                    reply {
+                                        title = "Error!"
+                                        description = "One (or more) of your nominees isn't one of the final candidates!"
+                                    }
+                                    return@command
+                                }
+                            }
+
+                            val rankedNominees = rankedNomineeIds.map {
+                                guildClient.getMember(it)
+                            }
+
+                            val registeredVoters = getRegisteredVoterPartiesAsync().await()
+
+                            if (voterId !in registeredVoters.keys) {
+                                newSuspendedTransaction(Dispatchers.IO) {
+                                    User.new {
+                                        discordId = voterId
+                                        party = 0
+                                    }
+                                }
+                            }
+
+                            val stringBuilder = StringBuilder()
+
+                            stringBuilder.append("Your vote for these candidates have been recorded:\n\n")
+                            var i = 1
+                            for (rankedNominee in rankedNominees) {
+                                stringBuilder.append("${i++}: ${rankedNominee.nickname ?: rankedNominee.user?.username ?: "Some person"}\n")
+                            }
+
+                            reply {
+                                title = "Success!"
+                                description = "$stringBuilder"
+                            }
+
+                            val userDbIds = getRegisteredVoterIdsAsync().await()
+
+                            newSuspendedTransaction(Dispatchers.IO) {
+                                addLogger(StdOutSqlLogger)
+                                GeneralVote.new {
+                                    this.voterId = userDbIds[voterId]!!
+                                    firstCandidateId = userDbIds[rankedNomineeIds[0]]!!
+                                    secondCandidateId = userDbIds[rankedNomineeIds[1]]!!
+                                    thirdCandidateId = userDbIds[rankedNomineeIds[2]]!!
+                                }
+                            }
+                        } catch (de: DiscordException) {
+                            reply {
+                                title = "Error!"
+                                description = "You must invoke this command with a mention of 3 nominees, in order of" +
+                                        " preference!"
+                            }
+                        }
+                    } else {
+                        reply {
+                            title = "Error!"
+                            description = "You must invoke this command with a mention of 3 nominees, in order of" +
+                                    " preference!"
                         }
                     }
                 }

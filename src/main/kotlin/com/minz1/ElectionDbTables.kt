@@ -47,3 +47,18 @@ class RunoffNomination(id: EntityID<Int>): IntEntity(id) {
     var runoffNominatorId by RunoffNominations.runoffNominatorId
     var runoffNomineeId by RunoffNominations.runoffNomineeId
 }
+
+object GeneralVotes : IntIdTable(columnName = "generalvoteid") {
+    val voterId = reference("voterid", Users)
+    val firstCandidateId = reference("firstcandidateid", Users)
+    val secondCandidateId = reference("secondcandidateid", Users)
+    val thirdCandidateId = reference("thirdcandidateid", Users)
+}
+
+class GeneralVote(id: EntityID<Int>): IntEntity(id) {
+    companion object : IntEntityClass<GeneralVote>(GeneralVotes)
+    var voterId by GeneralVotes.voterId
+    var firstCandidateId by GeneralVotes.firstCandidateId
+    var secondCandidateId by GeneralVotes.secondCandidateId
+    var thirdCandidateId by GeneralVotes.thirdCandidateId
+}
